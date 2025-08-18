@@ -6,7 +6,6 @@ from glob import glob
 import os
 import shutil
 import stat
-from subprocess import PIPE
 from subprocess import run
 from zipfile import ZIP_DEFLATED
 from zipfile import ZipFile
@@ -71,21 +70,6 @@ progress = notification
 with further_output('Clean up'):
     rmtree(BUILD)
 
-git_ls_files = run(['git', 'ls-files'], stdout=PIPE, check=True).stdout.decode('utf-8')
-
-PY_SOURCES = [
-    line
-    for line in git_ls_files.splitlines()
-    if line.endswith('.py')
-]
-
-with further_output('Copying over our sources'):
-    PY_DIRS = sorted({os.path.dirname(file) for file in PY_SOURCES})
-    for dir in PY_DIRS:
-        mkdir(os.path.join(SRC, dir))
-    for file in PY_SOURCES:
-        shutil.copy(file, os.path.join(SRC, file))
-
 with further_output('Downloading dependencies'):
     mkdir(PKGS)
     pip_download_source('--dest', PKGS, '--exists-action', 'w', '-r', 'requirements.txt')
@@ -95,13 +79,24 @@ with further_output('Unpacking packages'):
     for package in glob(PKGS + '/*'):
         pip('install', '--target', SRC, '--no-compile', '--no-deps', package)
 
-# # Technically we do not need these files,
-# # however licensing forces us to copy and keep them :(
-# for dir in glob(SRC + '/*.egg-info'):
-#     rmtree(dir)
+with further_output('Building wheel with uv'):
+    wheel_dir = BUILD + '/wheel'
+    mkdir(wheel_dir)
+    run(['uv', 'build', '--wheel', '--out-dir', wheel_dir],
+        cwd='.', check=True)
+
+    # Find the built wheel
+    wheel_files = glob(wheel_dir + '/*.whl')
+    if not wheel_files:
+        raise RuntimeError("No wheel file found after uv build")
+    [wheel_path] = wheel_files  # Should only be one wheel
+
+with further_output('Installing our own package from wheel'):
+    pip('install', '--target', SRC, '--no-compile', '--no-deps', wheel_path)
 
 with progress(f'Creating .pyz zip archive from the sources ({TOOL_PYZ})'):
     with ZipFile(TOOL_PYZ, mode='w', compression=ZIP_DEFLATED) as zip:
+        zip.write('__main__.py', '__main__.py')
         for realroot, dirs, files in os.walk(SRC):
             ziproot = os.path.relpath(realroot, SRC)
             for file_name in files:
