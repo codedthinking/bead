@@ -1,5 +1,6 @@
 # PYTHON_ARGCOMPLETE_OK
 from collections.abc import Sequence
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -16,7 +17,6 @@ from . import input
 from . import workspace
 from .cmdparse import Command
 from .cmdparse import Parser
-from .common import warning
 from .environment import Environment
 from .web import commands as web
 
@@ -25,46 +25,23 @@ def output_of(shell_cmd: str):
     return subprocess.check_output(shell_cmd, shell=True).decode('utf-8').strip()
 
 
-class _git:
-    def __init__(self):
-        try:
-            from . import git_info
-        except ImportError:
-            self.repo = output_of('git config --get remote.origin.url')
-            self.branch = output_of('git branch --show-current')
-            self.date = output_of("git show HEAD --pretty=tformat:'%cI' --no-patch")
-            self.commit = output_of("git show HEAD --pretty=tformat:'%H' --no-patch")
-            self.tag = output_of('git describe --tags')
-            modified_files = [
-                line for line in output_of('git status --porcelain=1').splitlines()
-                if not line.startswith('??') and ' bead_cli/git_info.py' not in line]
-            self.dirty = modified_files != []
-        else:
-            self.repo = git_info.GIT_REPO
-            self.branch = git_info.GIT_BRANCH
-            self.date = git_info.GIT_DATE
-            self.commit = git_info.GIT_HASH
-            self.tag = git_info.TAG_VERSION
-            self.dirty = git_info.DIRTY
+def get_version_info():
+    try:
+        version = importlib.metadata.version('bead')
+    except importlib.metadata.PackageNotFoundError:
+        version = 'unknown'
 
-        self.version_info = textwrap.dedent(
-            '''
-            Python:
-            ------
-            {sys.version}
+    return textwrap.dedent(
+        f'''
+        Python:
+        ------
+        {sys.version}
 
-            Bead source:
-            -----------
-            origin:  {git.repo}
-            branch:  {git.branch}
-            date:    {git.date}
-            hash:    {git.commit}
-            version: {git.tag}{version_suffix}
-            '''
-        ).format(git=self, sys=sys, version_suffix='-dirty' if self.dirty else '')
-
-
-git = _git()
+        Bead:
+        ----
+        {version}
+        '''
+    )
 
 
 class CmdVersion(Command):
@@ -73,7 +50,7 @@ class CmdVersion(Command):
     '''
 
     def run(self, args, env: 'Environment'):
-        print(git.version_info)
+        print(get_version_info())
 
 
 def make_argument_parser(defaults):
@@ -144,8 +121,6 @@ for your convenience, thus it is not really helpful in fixing the bug.
 
 
 def main(run=run):
-    if git.dirty:
-        warning('test build, DO NOT USE for production!!!')
     config_dir = appdirs.user_config_dir(
         'bead_cli-6a4d9d98-8e64-4a2a-b6c2-8a753ea61daf')
     try:
@@ -156,7 +131,7 @@ def main(run=run):
     except SystemExit:
         raise
     except BaseException:
-        # all remaining errors are catched - including RunTimeErrors
+        # all remaining erroros are catched - including RunTimeErrors
         sys_argv = f'{sys.argv!r}'
         exception = traceback.format_exc()
         short_exception = traceback.format_exc(limit=1)
@@ -164,9 +139,7 @@ def main(run=run):
         with open(error_report, 'w') as f:
             f.write(f'sys_argv = {sys_argv}\n')
             f.write(f'{exception}\n')
-            f.write(f'{git.version_info}\n')
-            if git.dirty:
-                f.write('WARNING: TEST BUILD, UNKNOWN, UNCOMMITTED CHANGES !!!\n')
+            f.write(f'{get_version_info()}\n')
         print(
             FAILURE_TEMPLATE.format(
                 exception=short_exception,
