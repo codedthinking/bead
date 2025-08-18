@@ -1,0 +1,21 @@
+# podman build -t bead-dev - < dev/Containerfile
+FROM python:3.12-slim-trixie
+
+RUN apt update
+RUN apt install -y direnv fd-find fzf git less ripgrep tree
+
+# uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# aider
+RUN uv venv --python python3.12 /opt/aider
+RUN bash -c 'source /opt/aider/bin/activate && uv pip install aider-chat'
+
+ENV PATH="$PATH:/opt/aider/bin"
+
+RUN cat > /opt/bashrc <<EOS
+eval "\$(direnv hook bash)"
+EOS
+
+ENTRYPOINT ["/bin/bash", "--rcfile", "/opt/bashrc"]
+CMD []

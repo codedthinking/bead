@@ -1,2 +1,40 @@
-#!/bin/sh
-exec podman run --rm -it -v $PWD:$PWD -v $HOME/.cache/uv:$HOME/.cache/uv -w $PWD --user $(id -u):$(id -g) ghcr.io/astral-sh/uv:python3.12-bookworm-slim /bin/bash
+#!/bin/bash
+
+directories_to_map=(
+    $PWD
+    ~/.aider
+    ~/.aider.tags.cache.v4
+    ~/.cache/uv
+    ~/.local/share/direnv
+    ~/.local/share/uv
+)
+
+files_to_map=(
+    ~/.gitconfig
+    ~/.aider.chat.history.md
+    ~/.aider.input.history
+)
+
+args=(
+    --user $(id -u):$(id -g)
+    --env "HOME=$HOME"
+    --workdir "$PWD"
+    --env-file ~/.env
+)
+
+for f in "${files_to_map[@]}"
+do
+    [ -f "$f" ] || {
+        mkdir -p "$(dirname "$f")"
+        touch "$f"
+    }
+    args+=(-v "$f:$f")
+done
+
+for d in "${directories_to_map[@]}"
+do
+    mkdir -p "$d"
+    args+=(-v "$d:$d")
+done
+
+exec podman run --rm -it "${args[@]}" bead-dev
