@@ -36,14 +36,13 @@ wheels = [
 
 [[package]]
 name = "bead"
-version = "0.8.1"
+version = "0.9.0.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "appdirs" },
     { name = "argcomplete" },
     { name = "attrs" },
     { name = "cached-property" },
-    { name = "pip" },
 ]
 
 [package.dev-dependencies]
@@ -51,6 +50,7 @@ dev = [
     { name = "flake8" },
     { name = "freezegun" },
     { name = "mypy" },
+    { name = "pip" },
     { name = "pre-commit" },
     { name = "pysnooper" },
     { name = "pytest" },
@@ -65,7 +65,6 @@ requires-dist = [
     { name = "argcomplete", specifier = ">=3.6.2" },
     { name = "attrs" },
     { name = "cached-property" },
-    { name = "pip", specifier = ">=25.1.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -73,6 +72,7 @@ dev = [
     { name = "flake8" },
     { name = "freezegun" },
     { name = "mypy" },
+    { name = "pip", specifier = ">=25.1.1" },
     { name = "pre-commit" },
     { name = "pysnooper" },
     { name = "pytest" },
