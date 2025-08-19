@@ -61,9 +61,9 @@ class BeadName(ValidatingStr):
         return string not in ('', '.', '..') and '/' not in string and '__' not in string
 
 
-assert type(BeadName('asd')) == BeadName
-assert type(BeadName('asd') + '/') != BeadName
-assert type(BeadName('asd')[0]) != BeadName
+assert type(BeadName('asd')) is BeadName
+assert type(BeadName('asd') + '/') is not BeadName
+assert type(BeadName('asd')[0]) is not BeadName
 
 
 class InputName(BeadName):
