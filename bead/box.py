@@ -173,9 +173,12 @@ class BeadSearch(ABC):
         """Return nth oldest bead (0=newest, 1=2nd newest, etc.) or raise LookupError if less items found."""
         pass
 
-    @abstractmethod
     def all(self) -> list[Archive]:
         """Return list of all matching beads."""
+        return list(self)
+
+    @abstractmethod
+    def __iter__(self) -> Iterator[Archive]:
         pass
 
 
@@ -281,13 +284,6 @@ class BaseSearch(BeadSearch):
         if n >= len(sorted_beads):
             raise LookupError(f"Not enough beads found (requested index {n}, found {len(sorted_beads)})")
         return sorted_beads[n]
-
-    def all(self) -> list[Archive]:
-        return list(self)
-
-    @abstractmethod
-    def __iter__(self) -> Iterator[Archive]:
-        pass
 
 
 class FileBasedSearch(BaseSearch):
