@@ -62,7 +62,6 @@ class CmdWeb(Command):
         Assign freshness to nodes, which are visualized as colors.
         Answers the question: "Are all input at the latest version?"
 
-
     heads
         Reduce graph to include only most recent computations per
         cluster and possibly a few older ones, that are referenced
