@@ -15,7 +15,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from enum import auto
-from typing import Iterable
+from typing import Any, Iterable, Sequence
 from typing import Iterator
 
 from . import tech
@@ -300,7 +300,7 @@ class FileBasedSearch(BaseSearch):
         self.box = box
 
     def __iter__(self):
-        beads = self.box._beads(self.conditions)
+        beads = self.box.get_beads(self.conditions)
         if self._unique_filter:
             seen_content_ids = set()
             for bead in beads:
@@ -325,7 +325,7 @@ class MultiBoxSearch(BaseSearch):
             seen_content_ids = set()
             for box in self.boxes:
                 try:
-                    for bead in box._beads(self.conditions):
+                    for bead in box.get_beads(self.conditions):
                         if bead.content_id not in seen_content_ids:
                             seen_content_ids.add(bead.content_id)
                             yield bead
@@ -334,7 +334,7 @@ class MultiBoxSearch(BaseSearch):
         else:
             for box in self.boxes:
                 try:
-                    yield from box._beads(self.conditions)
+                    yield from box.get_beads(self.conditions)
                 except (InvalidArchive, IOError, OSError):
                     continue
 
@@ -373,11 +373,11 @@ class Box:
         '''
         Iterator for all beads in this Box
         '''
-        return iter(self._beads([]))
+        return self.get_beads([])
 
-    def _beads(self, conditions) -> Iterable[Archive]:
+    def get_beads(self, conditions: Sequence[tuple[QueryCondition, Any]]=()) -> Iterator[Archive]:
         '''
-        Retrieve matching beads.
+        Get beads from this Box, optionally filtered by conditions.
         '''
         match = compile_conditions(conditions)
 
@@ -388,7 +388,7 @@ class Box:
         if bead_names:
             if len(bead_names) > 1:
                 # easy path: names disagree
-                return []
+                return iter([])
             # beadname_20170615T075813302092+0200.zip
             glob = bead_names.pop() + '_????????T????????????[-+]????.zip'
         else:
