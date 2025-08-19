@@ -240,37 +240,32 @@ class BaseSearch(BeadSearch):
         self._unique_filter = True
         return self
 
-    def _apply_unique_filter(self, beads: list[Archive]) -> list[Archive]:
-        if not self._unique_filter:
-            return beads
-        seen_content_ids = set()
-        unique_beads = []
-        for bead in beads:
-            if bead.content_id not in seen_content_ids:
-                seen_content_ids.add(bead.content_id)
-                unique_beads.append(bead)
-        return unique_beads
-
     def first(self) -> Archive:
-        beads = self._get_beads()
-        if not beads:
+        try:
+            return next(iter(self))
+        except StopIteration:
             raise LookupError("No beads found")
-        return beads[0]
 
     def oldest(self) -> Archive:
-        beads = self._get_beads()
-        if not beads:
+        oldest_bead = None
+        for bead in self:
+            if oldest_bead is None or bead.freeze_time < oldest_bead.freeze_time:
+                oldest_bead = bead
+        if oldest_bead is None:
             raise LookupError("No beads found")
-        return min(beads, key=lambda b: b.freeze_time)
+        return oldest_bead
 
     def newest(self) -> Archive:
-        beads = self._get_beads()
-        if not beads:
+        newest_bead = None
+        for bead in self:
+            if newest_bead is None or bead.freeze_time > newest_bead.freeze_time:
+                newest_bead = bead
+        if newest_bead is None:
             raise LookupError("No beads found")
-        return max(beads, key=lambda b: b.freeze_time)
+        return newest_bead
 
     def newer(self, n: int = 1) -> Archive:
-        beads = self._get_beads()
+        beads = list(self)
         if not beads:
             raise LookupError("No beads found")
         sorted_beads = sorted(beads, key=lambda b: b.freeze_time)
@@ -279,7 +274,7 @@ class BaseSearch(BeadSearch):
         return sorted_beads[n]
 
     def older(self, n: int = 1) -> Archive:
-        beads = self._get_beads()
+        beads = list(self)
         if not beads:
             raise LookupError("No beads found")
         sorted_beads = sorted(beads, key=lambda b: b.freeze_time, reverse=True)
@@ -288,11 +283,10 @@ class BaseSearch(BeadSearch):
         return sorted_beads[n]
 
     def all(self) -> list[Archive]:
-        return self._get_beads()
+        return list(self)
 
     @abstractmethod
-    def _get_beads(self) -> list[Archive]:
-        """Subclasses must implement this method to retrieve beads."""
+    def __iter__(self) -> Iterator[Archive]:
         pass
 
 
@@ -305,9 +299,16 @@ class FileBasedSearch(BaseSearch):
         super().__init__()
         self.box = box
 
-    def _get_beads(self) -> list[Archive]:
-        beads = list(self.box._beads(self.conditions))
-        return self._apply_unique_filter(beads)
+    def __iter__(self):
+        beads = self.box._beads(self.conditions)
+        if self._unique_filter:
+            seen_content_ids = set()
+            for bead in beads:
+                if bead.content_id not in seen_content_ids:
+                    seen_content_ids.add(bead.content_id)
+                    yield bead
+        else:
+            yield from beads
 
 
 class MultiBoxSearch(BaseSearch):
@@ -319,24 +320,29 @@ class MultiBoxSearch(BaseSearch):
         super().__init__()
         self.boxes = boxes
 
-    def _get_beads(self) -> list[Archive]:
-        all_beads = []
-        for box in self.boxes:
-            beads = list(box._beads(self.conditions))
-            all_beads.extend(beads)
-
-        return self._apply_unique_filter(all_beads)
+    def __iter__(self):
+        if self._unique_filter:
+            seen_content_ids = set()
+            for box in self.boxes:
+                try:
+                    for bead in box._beads(self.conditions):
+                        if bead.content_id not in seen_content_ids:
+                            seen_content_ids.add(bead.content_id)
+                            yield bead
+                except (InvalidArchive, IOError, OSError):
+                    continue
+        else:
+            for box in self.boxes:
+                try:
+                    yield from box._beads(self.conditions)
+                except (InvalidArchive, IOError, OSError):
+                    continue
 
     def first(self) -> Archive:
-        for box in self.boxes:
-            try:
-                beads = list(box._beads(self.conditions))
-                filtered_beads = self._apply_unique_filter(beads)
-                if filtered_beads:
-                    return filtered_beads[0]
-            except (InvalidArchive, IOError, OSError):
-                continue
-        raise LookupError("No beads found")
+        try:
+            return next(iter(self))
+        except StopIteration:
+            raise LookupError("No beads found")
 
 
 def search_boxes(boxes):
