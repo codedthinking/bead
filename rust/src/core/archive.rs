@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io;
 
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
@@ -271,6 +271,11 @@ impl Archive {
 
     /// Extract a single file from the archive
     pub fn extract_file(&self, archive_path: &str, dest_dir: &Path) -> Result<PathBuf> {
+        // Validate the archive path doesn't contain path traversal attempts
+        if archive_path.contains("..") {
+            return Err(BeadError::InvalidArchive("Path traversal detected in archive path".into()));
+        }
+        
         let mut zip = self.get_zipfile()?;
         
         let mut file = zip.by_name(archive_path)
@@ -283,9 +288,27 @@ impl Archive {
         
         let dest_path = dest_dir.join(file_name);
         
-        // Create parent directories if needed
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)?;
+        // Ensure the destination path is within dest_dir (defense in depth)
+        let dest_path = dest_path.canonicalize()
+            .or_else(|_| -> Result<PathBuf> {
+                // If file doesn't exist yet, canonicalize parent and append filename
+                if let Some(parent) = dest_path.parent() {
+                    fs::create_dir_all(parent)?;
+                    Ok(parent.canonicalize()?.join(file_name))
+                } else {
+                    Ok(dest_path.clone())
+                }
+            })?;
+        
+        // Verify the path is still within dest_dir
+        let dest_dir_canonical = dest_dir.canonicalize()
+            .or_else(|_| {
+                fs::create_dir_all(dest_dir)?;
+                dest_dir.canonicalize()
+            })?;
+        
+        if !dest_path.starts_with(&dest_dir_canonical) {
+            return Err(BeadError::InvalidArchive("Path traversal detected".into()));
         }
         
         // Extract the file
@@ -346,6 +369,10 @@ impl Archive {
     
     /// Extract all files from the archive
     pub fn extract_all(&self, dest_dir: &Path) -> Result<()> {
+        // Create destination directory if it doesn't exist
+        fs::create_dir_all(dest_dir)?;
+        let dest_dir_canonical = dest_dir.canonicalize()?;
+        
         let mut zip = self.get_zipfile()?;
         
         for i in 0..zip.len() {
@@ -357,11 +384,26 @@ impl Archive {
                 continue;
             }
             
-            let dest_path = dest_dir.join(&file_path);
+            // Sanitize the path - remove leading slashes and check for path traversal
+            let sanitized_path = file_path.trim_start_matches('/');
+            if sanitized_path.contains("..") {
+                return Err(BeadError::InvalidArchive(
+                    format!("Path traversal detected in archive: {}", file_path)
+                ));
+            }
+            
+            let dest_path = dest_dir_canonical.join(sanitized_path);
             
             // Create parent directories
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            
+            // Final safety check - ensure destination is within dest_dir
+            if !dest_path.starts_with(&dest_dir_canonical) {
+                return Err(BeadError::InvalidArchive(
+                    format!("Path traversal detected for: {}", file_path)
+                ));
             }
             
             // Extract the file
@@ -558,6 +600,381 @@ mod tests {
         assert!(extract_dir.path().join("meta/bead").exists());
         assert!(extract_dir.path().join("data/test.txt").exists());
         assert!(extract_dir.path().join("code/main.rs").exists());
+    }
+
+    #[test]
+    fn test_extract_file_with_nested_path() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Extract a deeply nested file
+        let result = archive.extract_file("data/subdir/nested.txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let extracted_file = extract_dir.path().join("nested.txt");
+        assert!(extracted_file.exists());
+        
+        let content = fs::read_to_string(&extracted_file).unwrap();
+        assert_eq!(content, "nested content");
+    }
+
+    #[test]
+    fn test_extract_file_to_non_existent_dest() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        let non_existent = extract_dir.path().join("non/existent/path");
+        
+        // Should create parent directories
+        let result = archive.extract_file("data/test.txt", &non_existent);
+        assert!(result.is_ok());
+        assert!(non_existent.join("test.txt").exists());
+    }
+
+    #[test]
+    fn test_extract_file_overwrite_existing() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Create existing file with different content
+        let existing_file = extract_dir.path().join("test.txt");
+        fs::write(&existing_file, "old content").unwrap();
+        
+        // Extract should overwrite
+        let result = archive.extract_file("data/test.txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let content = fs::read_to_string(&existing_file).unwrap();
+        assert_eq!(content, "test content");
+    }
+
+    #[test]
+    fn test_extract_empty_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create archive with empty file
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            let options = zip::write::FileOptions::default();
+            zip.start_file("data/empty.txt", options).unwrap();
+            // Don't write any content
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_file("data/empty.txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let extracted_file = extract_dir.path().join("empty.txt");
+        assert!(extracted_file.exists());
+        assert_eq!(fs::read_to_string(&extracted_file).unwrap(), "");
+    }
+
+    #[test]
+    fn test_extract_large_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create archive with large file (1MB)
+        let large_content = vec![b'x'; 1024 * 1024];
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            let options = zip::write::FileOptions::default();
+            zip.start_file("data/large.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, &large_content).unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_file("data/large.txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let extracted_file = extract_dir.path().join("large.txt");
+        assert!(extracted_file.exists());
+        assert_eq!(fs::read(&extracted_file).unwrap().len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_extract_file_with_special_chars() {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create archive with file containing special characters
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            let options = zip::write::FileOptions::default();
+            zip.start_file("data/test file (copy).txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"special chars content").unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_file("data/test file (copy).txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let extracted_file = extract_dir.path().join("test file (copy).txt");
+        assert!(extracted_file.exists());
+    }
+
+    #[test]
+    fn test_extract_dir_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create archive with empty directory (no files in it)
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            // Add a file outside the empty dir
+            let options = zip::write::FileOptions::default();
+            zip.start_file("other/file.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"content").unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Try to extract from empty directory
+        let result = archive.extract_dir("empty/", extract_dir.path());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_extract_dir_deeply_nested() {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create archive with deeply nested directories
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            let options = zip::write::FileOptions::default();
+            zip.start_file("data/a/b/c/d/deep.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"deep content").unwrap();
+            
+            zip.start_file("data/a/b/mid.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"mid content").unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_dir("data/a/", extract_dir.path());
+        assert!(result.is_ok());
+        
+        assert!(extract_dir.path().join("b/c/d/deep.txt").exists());
+        assert!(extract_dir.path().join("b/mid.txt").exists());
+    }
+
+    #[test]
+    fn test_extract_dir_non_existent() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_dir("nonexistent/", extract_dir.path());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_extract_dir_without_trailing_slash() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Should still work without trailing slash
+        let result = archive.extract_dir("data", extract_dir.path());
+        assert!(result.is_ok());
+        
+        assert!(extract_dir.path().join("test.txt").exists());
+        assert!(extract_dir.path().join("subdir/nested.txt").exists());
+    }
+
+    #[test]
+    fn test_extract_all_to_non_existent_dest() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        let non_existent = extract_dir.path().join("new/dest");
+        
+        // Should create destination directories
+        let result = archive.extract_all(&non_existent);
+        assert!(result.is_ok());
+        assert!(non_existent.join("data/test.txt").exists());
+    }
+
+    #[test]
+    fn test_extract_preserves_directory_structure() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        archive.extract_all(extract_dir.path()).unwrap();
+        
+        // Verify full directory structure is preserved
+        assert!(extract_dir.path().join("meta").is_dir());
+        assert!(extract_dir.path().join("data").is_dir());
+        assert!(extract_dir.path().join("data/subdir").is_dir());
+        assert!(extract_dir.path().join("code").is_dir());
+    }
+
+    #[test]
+    fn test_extract_file_case_sensitive() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Wrong case should fail
+        let result = archive.extract_file("Data/Test.txt", extract_dir.path());
+        assert!(result.is_err());
+        
+        // Correct case should succeed
+        let result = archive.extract_file("data/test.txt", extract_dir.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_concurrent_extractions() {
+        use std::thread;
+        use std::sync::Arc;
+        
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let archive = Arc::new(archive);
+        
+        let mut handles = vec![];
+        
+        for _i in 0..3 {
+            let archive_clone = Arc::clone(&archive);
+            let handle = thread::spawn(move || {
+                let extract_dir = TempDir::new().unwrap();
+                let result = archive_clone.extract_all(extract_dir.path());
+                assert!(result.is_ok());
+                assert!(extract_dir.path().join("data/test.txt").exists());
+            });
+            handles.push(handle);
+        }
+        
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_extract_with_absolute_path_in_archive() {
+        // This test ensures we handle potentially malicious archives safely
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Try to create archive with absolute path (should be rejected or normalized)
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            add_test_metadata(&mut zip);
+            
+            let options = zip::write::FileOptions::default();
+            // Note: Most zip libraries will normalize this anyway
+            zip.start_file("/etc/passwd", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"malicious content").unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Should extract safely within the target directory
+        let result = archive.extract_all(extract_dir.path());
+        assert!(result.is_ok());
+        
+        // File should be extracted relative to extract_dir, not at /etc/passwd
+        assert!(!Path::new("/etc/passwd").exists() || 
+                fs::read_to_string("/etc/passwd").unwrap() != "malicious content");
+    }
+
+    #[test]
+    fn test_extract_dir_with_file_selection() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Extract only from data directory
+        let files = archive.extract_dir("data/", extract_dir.path()).unwrap();
+        
+        // Should have extracted exactly 2 files
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|p| p.ends_with("test.txt")));
+        assert!(files.iter().any(|p| p.ends_with("nested.txt")));
+        
+        // Code files should not be extracted
+        assert!(!extract_dir.path().join("main.rs").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_extract_readonly_destination() {
+        use std::os::unix::fs::PermissionsExt;
+        
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Make destination read-only
+        let mut perms = fs::metadata(extract_dir.path()).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(extract_dir.path(), perms).unwrap();
+        
+        // Should fail to extract
+        let result = archive.extract_file("data/test.txt", extract_dir.path());
+        assert!(result.is_err());
+        
+        // Restore permissions for cleanup
+        let mut perms = fs::metadata(extract_dir.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(extract_dir.path(), perms).unwrap();
+    }
+
+    // Helper function to add standard test metadata
+    fn add_test_metadata(zip: &mut zip::ZipWriter<File>) {
+        let meta = BeadMeta::new_frozen(
+            "test-kind".to_string(),
+            BeadName::new("test-bead").unwrap(),
+            "20240115T120000000000+0000".to_string(),
+        );
+        
+        persistence::save_json_to_zip(zip, &meta, layout::BEAD_META).unwrap();
+        
+        let manifest: HashMap<String, String> = HashMap::new();
+        persistence::save_json_to_zip(zip, &manifest, layout::MANIFEST).unwrap();
+        
+        let input_map: HashMap<String, String> = HashMap::new();
+        persistence::save_json_to_zip(zip, &input_map, layout::INPUT_MAP).unwrap();
     }
 
     fn create_test_archive_with_files() -> (TempDir, Archive) {
