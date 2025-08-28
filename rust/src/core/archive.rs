@@ -153,14 +153,24 @@ impl Archive {
         Ok(zip.lock().unwrap())
     }
 
+    /// Get the archive path
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    
     /// Get the bead name
     pub fn name(&self) -> &BeadName {
         &self.name
     }
 
     /// Get the bead kind
-    pub fn kind(&self) -> Result<String> {
-        Ok(self.meta()?.kind.clone())
+    pub fn kind(&self) -> String {
+        // Get from cache or load metadata
+        if let Ok(meta) = self.meta() {
+            meta.kind.clone()
+        } else {
+            "unknown".to_string()
+        }
     }
 
     /// Get content ID
@@ -481,7 +491,7 @@ mod tests {
     #[test]
     fn test_archive_kind() {
         let (_temp_dir, archive) = create_test_archive();
-        assert_eq!(archive.kind().unwrap(), "test-kind");
+        assert_eq!(archive.kind(), "test-kind");
     }
 
     #[test]
