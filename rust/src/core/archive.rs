@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
@@ -30,7 +31,7 @@ pub struct Archive {
     name: BeadName,
     cache: HashMap<String, serde_json::Value>,
     cache_path: PathBuf,
-    zipfile: OnceCell<ZipArchive<File>>,
+    zipfile: OnceCell<std::sync::Mutex<ZipArchive<File>>>,
     meta: OnceCell<BeadMeta>,
 }
 
@@ -268,6 +269,109 @@ impl Archive {
         Ok(())
     }
 
+    /// Extract a single file from the archive
+    pub fn extract_file(&self, archive_path: &str, dest_dir: &Path) -> Result<PathBuf> {
+        let mut zip = self.get_zipfile()?;
+        
+        let mut file = zip.by_name(archive_path)
+            .map_err(|_| BeadError::InvalidArchive(format!("File not found in archive: {}", archive_path)))?;
+        
+        // Get just the filename from the archive path
+        let file_name = Path::new(archive_path)
+            .file_name()
+            .ok_or_else(|| BeadError::InvalidArchive("Invalid file path in archive".into()))?;
+        
+        let dest_path = dest_dir.join(file_name);
+        
+        // Create parent directories if needed
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Extract the file
+        let mut dest_file = File::create(&dest_path)?;
+        io::copy(&mut file, &mut dest_file)?;
+        
+        Ok(dest_path)
+    }
+    
+    /// Extract all files from a directory in the archive
+    pub fn extract_dir(&self, dir_prefix: &str, dest_dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut extracted_files = Vec::new();
+        let mut zip = self.get_zipfile()?;
+        
+        // Normalize the prefix to ensure it ends with /
+        let prefix = if dir_prefix.ends_with('/') {
+            dir_prefix.to_string()
+        } else {
+            format!("{}/", dir_prefix)
+        };
+        
+        // Collect file names first to avoid borrow issues
+        let file_names: Vec<String> = (0..zip.len())
+            .filter_map(|i| {
+                zip.by_index(i).ok().and_then(|file| {
+                    let name = file.name().to_string();
+                    if name.starts_with(&prefix) && !name.ends_with('/') {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        
+        // Extract each file
+        for file_name in file_names {
+            let mut file = zip.by_name(&file_name)?;
+            
+            // Calculate destination path
+            let relative_path = &file_name[prefix.len()..];
+            let dest_path = dest_dir.join(relative_path);
+            
+            // Create parent directories
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            
+            // Extract the file
+            let mut dest_file = File::create(&dest_path)?;
+            io::copy(&mut file, &mut dest_file)?;
+            
+            extracted_files.push(dest_path);
+        }
+        
+        Ok(extracted_files)
+    }
+    
+    /// Extract all files from the archive
+    pub fn extract_all(&self, dest_dir: &Path) -> Result<()> {
+        let mut zip = self.get_zipfile()?;
+        
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i)?;
+            let file_path = file.name().to_string();
+            
+            // Skip directories
+            if file_path.ends_with('/') {
+                continue;
+            }
+            
+            let dest_path = dest_dir.join(&file_path);
+            
+            // Create parent directories
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            
+            // Extract the file
+            let mut dest_file = File::create(&dest_path)?;
+            io::copy(&mut file, &mut dest_file)?;
+        }
+        
+        Ok(())
+    }
+
     /// Parse bead name from archive path
     fn parse_name_from_path(path: &Path) -> Result<BeadName> {
         let filename = path.file_name()
@@ -291,14 +395,15 @@ impl Archive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{TempDir, NamedTempFile};
+    use tempfile::TempDir;
 
-    fn create_test_archive() -> (NamedTempFile, Archive) {
-        let temp_file = NamedTempFile::new().unwrap();
+    fn create_test_archive() -> (TempDir, Archive) {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
         
         // Create a minimal valid ZIP archive
         {
-            let file = File::create(temp_file.path()).unwrap();
+            let file = File::create(&archive_path).unwrap();
             let mut zip = zip::ZipWriter::new(file);
             
             // Add required metadata
@@ -319,13 +424,13 @@ mod tests {
             zip.finish().unwrap();
         }
         
-        let archive = Archive::open(temp_file.path(), "test-box").unwrap();
-        (temp_file, archive)
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        (temp_dir, archive)
     }
 
     #[test]
     fn test_archive_open() {
-        let (_temp_file, archive) = create_test_archive();
+        let (_temp_dir, archive) = create_test_archive();
         assert_eq!(archive.name().as_str(), "test-bead");
         assert_eq!(archive.box_name, "test-box");
     }
@@ -339,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_archive_metadata() {
-        let (_temp_file, archive) = create_test_archive();
+        let (_temp_dir, archive) = create_test_archive();
         
         let meta = archive.meta().unwrap();
         assert_eq!(meta.kind, "test-kind");
@@ -349,20 +454,20 @@ mod tests {
 
     #[test]
     fn test_archive_kind() {
-        let (_temp_file, archive) = create_test_archive();
+        let (_temp_dir, archive) = create_test_archive();
         assert_eq!(archive.kind().unwrap(), "test-kind");
     }
 
     #[test]
     fn test_archive_inputs() {
-        let (_temp_file, archive) = create_test_archive();
+        let (_temp_dir, archive) = create_test_archive();
         let inputs = archive.inputs();
         assert!(inputs.is_empty());
     }
 
     #[test]
     fn test_archive_validate() {
-        let (_temp_file, archive) = create_test_archive();
+        let (_temp_dir, archive) = create_test_archive();
         assert!(archive.validate().is_ok());
     }
 
@@ -390,8 +495,8 @@ mod tests {
         let workspace_path = workspace_dir.path().join("test-workspace");
         let workspace = Workspace::create(&workspace_path, "test-kind".to_string()).unwrap();
         
-        let archive_file = NamedTempFile::new().unwrap();
-        let archive_path = archive_file.path().with_extension("zip");
+        let archive_dir = TempDir::new().unwrap();
+        let archive_path = archive_dir.path().join("test-workspace_20240115T120000000000+0000.zip");
         
         let freeze_time = "20240115T120000000000+0000".to_string();
         let comment = "Test archive comment";
@@ -400,5 +505,101 @@ mod tests {
         
         assert_eq!(archive.name().as_str(), "test-workspace");
         assert!(archive_path.exists());
+    }
+
+    #[test]
+    fn test_archive_extract_file() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Extract a single file
+        let result = archive.extract_file("data/test.txt", extract_dir.path());
+        assert!(result.is_ok());
+        
+        let extracted_file = extract_dir.path().join("test.txt");
+        assert!(extracted_file.exists());
+        
+        let content = fs::read_to_string(&extracted_file).unwrap();
+        assert_eq!(content, "test content");
+    }
+
+    #[test]
+    fn test_archive_extract_file_nonexistent() {
+        let (_temp_dir, archive) = create_test_archive();
+        let extract_dir = TempDir::new().unwrap();
+        
+        let result = archive.extract_file("nonexistent.txt", extract_dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_archive_extract_dir() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Extract entire data directory
+        let result = archive.extract_dir("data/", extract_dir.path());
+        assert!(result.is_ok());
+        
+        assert!(extract_dir.path().join("test.txt").exists());
+        assert!(extract_dir.path().join("subdir/nested.txt").exists());
+    }
+
+    #[test]
+    fn test_archive_extract_all() {
+        let (_temp_dir, archive) = create_test_archive_with_files();
+        let extract_dir = TempDir::new().unwrap();
+        
+        // Extract everything
+        let result = archive.extract_all(extract_dir.path());
+        assert!(result.is_ok());
+        
+        // Check that various parts were extracted
+        assert!(extract_dir.path().join("meta/bead").exists());
+        assert!(extract_dir.path().join("data/test.txt").exists());
+        assert!(extract_dir.path().join("code/main.rs").exists());
+    }
+
+    fn create_test_archive_with_files() -> (TempDir, Archive) {
+        let temp_dir = TempDir::new().unwrap();
+        let archive_path = temp_dir.path().join("test-bead_20240115T120000000000+0000.zip");
+        
+        // Create a ZIP archive with test files
+        {
+            let file = File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            
+            // Add metadata
+            let meta = BeadMeta::new_frozen(
+                "test-kind".to_string(),
+                BeadName::new("test-bead").unwrap(),
+                "20240115T120000000000+0000".to_string(),
+            );
+            
+            persistence::save_json_to_zip(&mut zip, &meta, layout::BEAD_META).unwrap();
+            
+            let manifest: HashMap<String, String> = HashMap::new();
+            persistence::save_json_to_zip(&mut zip, &manifest, layout::MANIFEST).unwrap();
+            
+            let input_map: HashMap<String, String> = HashMap::new();
+            persistence::save_json_to_zip(&mut zip, &input_map, layout::INPUT_MAP).unwrap();
+            
+            // Add test data files
+            let options = zip::write::FileOptions::default();
+            zip.start_file("data/test.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"test content").unwrap();
+            
+            zip.start_file("data/subdir/nested.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"nested content").unwrap();
+            
+            // Add test code files
+            zip.start_file("code/main.rs", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"fn main() {}").unwrap();
+            
+            zip.finish().unwrap();
+        }
+        
+        let archive = Archive::open(&archive_path, "test-box").unwrap();
+        (temp_dir, archive)
     }
 }

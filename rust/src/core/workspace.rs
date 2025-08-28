@@ -2,12 +2,11 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashMap;
 use crate::error::{BeadError, Result};
-use crate::core::meta::{BeadMeta, InputSpec, BeadName, InputName};
+use crate::core::meta::{BeadMeta, InputSpec};
 use crate::tech::persistence;
 
 /// Layout constants for workspace directories
 pub mod layout {
-    use std::path::Path;
     
     pub const INPUT: &str = "input";
     pub const OUTPUT: &str = "output";

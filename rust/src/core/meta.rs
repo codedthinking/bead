@@ -73,6 +73,10 @@ impl ContentId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn starts_with(&self, prefix: &str) -> bool {
+        self.0.starts_with(prefix)
+    }
 }
 
 impl std::fmt::Display for ContentId {

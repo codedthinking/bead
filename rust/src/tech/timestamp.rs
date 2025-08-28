@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc, TimeZone, FixedOffset};
+use chrono::{DateTime, Utc, TimeZone, FixedOffset, Timelike};
 use crate::error::{BeadError, Result};
 
 /// Generate a timestamp in bead format: YYYYMMDDTHHMMSSNNNNNN±ZZZZ
@@ -69,6 +69,7 @@ pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn test_timestamp_generation() {

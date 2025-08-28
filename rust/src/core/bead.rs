@@ -33,7 +33,6 @@ pub trait Bead {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::meta::BeadMeta;
     
     // Mock implementation for testing
     struct MockBead {

@@ -5,8 +5,7 @@ use regex::Regex;
 use crate::error::{BeadError, Result};
 use crate::core::archive::Archive;
 use crate::core::workspace::Workspace;
-use crate::core::meta::BeadName;
-use crate::tech::timestamp;
+
 
 /// A Box is a storage location for bead archives
 #[derive(Debug, Clone)]
@@ -194,6 +193,7 @@ impl UnionBox {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use crate::tech::timestamp;
 
     fn create_test_box() -> (TempDir, Box) {
         let temp_dir = TempDir::new().unwrap();

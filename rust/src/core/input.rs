@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use crate::error::{BeadError, Result};
+use crate::error::Result;
 use crate::core::meta::{InputSpec, InputName};
-use crate::core::workspace::Workspace;
 use crate::core::archive::Archive;
 
 /// Represents an input dependency in a workspace

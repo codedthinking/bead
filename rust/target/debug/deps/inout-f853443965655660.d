@@ -1,0 +1,11 @@
+/Users/koren/Documents/business/codedthinking/products/bead.zip/bead/rust/target/debug/deps/libinout-f853443965655660.rmeta: /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/lib.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/errors.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout_buf.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/reserved.rs
+
+/Users/koren/Documents/business/codedthinking/products/bead.zip/bead/rust/target/debug/deps/libinout-f853443965655660.rlib: /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/lib.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/errors.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout_buf.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/reserved.rs
+
+/Users/koren/Documents/business/codedthinking/products/bead.zip/bead/rust/target/debug/deps/inout-f853443965655660.d: /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/lib.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/errors.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout_buf.rs /Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/reserved.rs
+
+/Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/lib.rs:
+/Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/errors.rs:
+/Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout.rs:
+/Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/inout_buf.rs:
+/Users/koren/.cargo/registry/src/index.crates.io-6f17d22bba15001f/inout-0.1.4/src/reserved.rs:
