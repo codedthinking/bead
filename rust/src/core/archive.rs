@@ -193,28 +193,6 @@ impl Archive {
             .unwrap_or_default()
     }
 
-    /// Extract data to a directory
-    pub fn unpack_data_to(&self, target_dir: impl AsRef<Path>) -> Result<()> {
-        let mut zip = self.get_zipfile()?;
-        
-        // Extract all files in data/ directory
-        for i in 0..zip.len() {
-            let mut file = zip.by_index(i)?;
-            let name = file.name();
-            
-            if name.starts_with("data/") {
-                let target_path = target_dir.as_ref().join(&name[5..]);
-                if let Some(parent) = target_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                
-                let mut target_file = File::create(target_path)?;
-                std::io::copy(&mut file, &mut target_file)?;
-            }
-        }
-        
-        Ok(())
-    }
 
     /// Extract code to a directory
     pub fn unpack_code_to(&self, target_dir: impl AsRef<Path>) -> Result<()> {
@@ -365,6 +343,12 @@ impl Archive {
         }
         
         Ok(extracted_files)
+    }
+    
+    /// Unpack data directory to destination (for input loading)
+    pub fn unpack_data_to(&self, dest_dir: &Path) -> Result<()> {
+        self.extract_dir("data/", dest_dir)?;
+        Ok(())
     }
     
     /// Extract all files from the archive
